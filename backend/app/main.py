@@ -24,12 +24,15 @@ from .schemas import (
     InterviewPreparationCreate,
     InterviewPreparationResponse,
     InterviewPreparationResult,
+    AiInterviewTurnRequest,
+    AiInterviewTurnResponse,
 )
 from .services.bars_loader import load_bars_criteria
 from .services.evaluator import evaluate_interview, generate_interview_preparation
 from .services.file_parser import extract_text_from_resume_file
 from .services.session_evaluator import evaluate_session
 from .services.transcriber import transcribe_audio
+from .services.ai_interview import get_next_turn
 
 
 @asynccontextmanager
@@ -42,10 +45,7 @@ app = FastAPI(title=settings.app_name, lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://127.0.0.1:3000",
-        "http://localhost:3000",
-    ],
+    allow_origins=[o.strip() for o in settings.cors_origins.split(",")],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -473,3 +473,18 @@ def get_interview_preparation(preparation_id: int, db: Session = Depends(get_db)
     if not preparation:
         raise HTTPException(status_code=404, detail="Preparation not found")
     return _preparation_to_response(preparation)
+
+
+# --- AI面接（テスト版、DB保存なし） ---
+
+@app.post(f"{settings.api_v1_prefix}/ai-interview/turn", response_model=AiInterviewTurnResponse)
+def ai_interview_turn(payload: AiInterviewTurnRequest):
+    history = [item.model_dump() for item in payload.history]
+    result = get_next_turn(history, include_audio=payload.include_audio)
+    return AiInterviewTurnResponse(
+        role="interviewer",
+        content=result["content"],
+        is_final=result["is_final"],
+        question_number=result["question_number"],
+        audio_base64=result["audio_base64"],
+    )

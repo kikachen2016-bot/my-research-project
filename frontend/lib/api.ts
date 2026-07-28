@@ -1,4 +1,4 @@
-import { BarsCriterion, InterviewDetail, InterviewSummary, InterviewPreparationResponse, SessionDetail, SessionSummary, TurnInput } from './types';
+import { BarsCriterion, InterviewDetail, InterviewSummary, InterviewPreparationResponse, SessionDetail, SessionSummary, TurnInput, AiInterviewMessage, AiInterviewTurnResponse } from './types';
 import { getApiBase } from './api-base';
 
 const API_URL = getApiBase();
@@ -45,4 +45,17 @@ export async function getSession(id: string): Promise<SessionDetail> {
 export async function getPreparation(id: string): Promise<InterviewPreparationResponse> {
   const res = await fetch(`${API_URL}/interview-preparation/${id}`, { cache: 'no-store' });
   return parseJson<InterviewPreparationResponse>(res, 'Failed to load preparation');
+}
+
+export async function postAiInterviewTurn(
+  history: AiInterviewMessage[],
+  includeAudio = false,
+): Promise<AiInterviewTurnResponse> {
+  const res = await fetch(`${API_URL}/ai-interview/turn`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ history, include_audio: includeAudio }),
+    cache: 'no-store',
+  });
+  return parseJson<AiInterviewTurnResponse>(res, 'Failed to get next interview turn');
 }

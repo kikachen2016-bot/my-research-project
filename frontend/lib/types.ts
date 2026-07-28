@@ -126,3 +126,18 @@ export type InterviewPreparationResponse = {
   job_id: number;
   result_json: InterviewPreparationResult;
 };
+
+// --- AI面接（テスト版） ---
+
+export type AiInterviewMessage = {
+  role: 'interviewer' | 'candidate';
+  content: string;
+};
+
+export type AiInterviewTurnResponse = {
+  role: 'interviewer';
+  content: string;
+  is_final: boolean;
+  question_number: number;
+  audio_base64: string;
+};

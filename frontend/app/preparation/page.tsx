@@ -3,6 +3,7 @@
 import { useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { getApiBase } from '@/lib/api-base';
+import { SAMPLE_RESUME, SAMPLE_JOB } from '@/lib/debug-samples';
 
 export default function PreparationPage() {
   const router = useRouter();
@@ -57,6 +58,8 @@ export default function PreparationPage() {
     setError('');
 
     try {
+      // 履歴情報をbackendに送り保存
+      // 面接者のidを取得
       const candidateId = await saveCandidateProfile();
 
       const jobRes = await fetch(`${apiUrl}/job`, {
@@ -96,6 +99,22 @@ export default function PreparationPage() {
           <div>
             <div className="eyebrow">面談前準備</div>
             <h1>準備シートを作成する</h1>
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button
+              type="button"
+              className="button secondary"
+              onClick={() => { setResumeText(SAMPLE_RESUME); setJobDescription(SAMPLE_JOB); }}
+            >
+              サンプルデータ入力
+            </button>
+            <button
+              type="button"
+              className="button secondary"
+              onClick={() => { setResumeText(''); setJobDescription(''); }}
+            >
+              データクリア
+            </button>
           </div>
         </div>
 

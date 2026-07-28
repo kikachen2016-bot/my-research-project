@@ -176,3 +176,23 @@ class InterviewPreparationResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+# --- AI面接（テスト版） ---
+
+class AiInterviewMessage(BaseModel):
+    role: str  # "interviewer" or "candidate"
+    content: str
+
+
+class AiInterviewTurnRequest(BaseModel):
+    history: list[AiInterviewMessage] = []
+    include_audio: bool = False
+
+
+class AiInterviewTurnResponse(BaseModel):
+    role: str = "interviewer"
+    content: str
+    is_final: bool
+    question_number: int
+    audio_base64: str = ""
