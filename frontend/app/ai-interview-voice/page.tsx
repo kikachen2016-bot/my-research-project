@@ -1,15 +1,23 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { postAiInterviewTurn } from '@/lib/api';
+import { parseVoiceContext, postAiInterviewTurn } from '@/lib/api';
 import type { AiInterviewMessage } from '@/lib/types';
 
 const MAX_QUESTIONS = 5;
 const MAX_RETRIES = 3;
+const ACCEPT = '.txt,.pdf,.xlsx,.xls,.docx';
 
 type Phase = 'idle' | 'loading' | 'speaking' | 'listening' | 'done';
 
 export default function AiInterviewVoicePage() {
+  // --- Setup state ---
+  const [jobFile, setJobFile] = useState<File | null>(null);
+  const [resumeFile, setResumeFile] = useState<File | null>(null);
+  const [setupLoading, setSetupLoading] = useState(false);
+  const [setupError, setSetupError] = useState('');
+
+  // --- Interview state ---
   const [messages, setMessages] = useState<AiInterviewMessage[]>([]);
   const [phase, setPhase] = useState<Phase>('idle');
   const [error, setError] = useState('');
@@ -17,8 +25,10 @@ export default function AiInterviewVoicePage() {
   const [liveTranscript, setLiveTranscript] = useState('');
   const [feedback, setFeedback] = useState('');
 
-  // Mutable refs — avoid stale closures in async callbacks
+  // --- Mutable refs (avoid stale closures in async callbacks) ---
   const messagesRef = useRef<AiInterviewMessage[]>([]);
+  const jobDescriptionRef = useRef('');
+  const resumeTextRef = useRef('');
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const recognitionRef = useRef<SpeechRecognition | null>(null);
   const ttsResolveRef = useRef<(() => void) | null>(null);
@@ -44,19 +54,17 @@ export default function AiInterviewVoicePage() {
   }, []);
 
   // ---------------------------------------------------------------------------
-  // TTS: OpenAI audio (base64 MP3) → fallback to Web Speech API
+  // TTS: OpenAI audio (base64 MP3) → fallback Web Speech API
   // ---------------------------------------------------------------------------
   async function playTts(content: string, audioBase64: string): Promise<void> {
     return new Promise((resolve) => {
       ttsResolveRef.current = resolve;
-
       const done = () => {
         if (ttsResolveRef.current === resolve) {
           ttsResolveRef.current = null;
           resolve();
         }
       };
-
       if (audioBase64) {
         const audio = new Audio(`data:audio/mpeg;base64,${audioBase64}`);
         audioRef.current = audio;
@@ -94,7 +102,6 @@ export default function AiInterviewVoicePage() {
 
   // ---------------------------------------------------------------------------
   // STT: Web Speech API (Chrome推奨)
-  // Auto-sends recognized text; retries silently if no speech detected
   // ---------------------------------------------------------------------------
   function startMic() {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -153,7 +160,6 @@ export default function AiInterviewVoicePage() {
         setMessages(updated);
         void fetchAndPlayRef.current(updated);
       } else {
-        // No speech detected — retry silently
         if (retryCountRef.current < MAX_RETRIES) {
           retryCountRef.current++;
           setTimeout(() => startMicRef.current(), 300);
@@ -172,13 +178,18 @@ export default function AiInterviewVoicePage() {
   }
 
   // ---------------------------------------------------------------------------
-  // Core conversation loop: fetch next turn → play TTS → start mic → repeat
+  // Core loop: fetch turn → TTS → mic → repeat
   // ---------------------------------------------------------------------------
   async function fetchAndPlay(history: AiInterviewMessage[]) {
     setPhase('loading');
     setError('');
     try {
-      const res = await postAiInterviewTurn(history, true);
+      const res = await postAiInterviewTurn(
+        history,
+        true,
+        jobDescriptionRef.current,
+        resumeTextRef.current,
+      );
       setQuestionNumber(res.question_number);
 
       if (res.is_final) {
@@ -200,13 +211,28 @@ export default function AiInterviewVoicePage() {
     }
   }
 
-  // Always keep refs pointing to latest function versions
+  // Always keep refs pointing to latest versions
   fetchAndPlayRef.current = fetchAndPlay;
   startMicRef.current = startMic;
 
-  function handleStart() {
-    retryCountRef.current = 0;
-    void fetchAndPlay([]);
+  // ---------------------------------------------------------------------------
+  // Start: upload & parse files, then begin
+  // ---------------------------------------------------------------------------
+  async function handleStart() {
+    if (!jobFile || !resumeFile) return;
+    setSetupLoading(true);
+    setSetupError('');
+    try {
+      const { job_description, resume_text } = await parseVoiceContext(jobFile, resumeFile);
+      jobDescriptionRef.current = job_description;
+      resumeTextRef.current = resume_text;
+      retryCountRef.current = 0;
+      await fetchAndPlay([]);
+    } catch (err) {
+      setSetupError(err instanceof Error ? err.message : 'ファイルの解析に失敗しました');
+    } finally {
+      setSetupLoading(false);
+    }
   }
 
   const currentQuestion =
@@ -236,84 +262,116 @@ export default function AiInterviewVoicePage() {
         </p>
       </section>
 
-      {/* Interaction area */}
-      <section className="card">
-        {currentQuestion && (
-          <div style={{ marginBottom: phase === 'speaking' ? 6 : 20 }}>
-            <div className="meta-label">面接官の質問</div>
-            <div className="chat-bubble interviewer" style={{ maxWidth: '100%' }}>
-              <div className="chat-bubble-label">面接官（AI）</div>
-              <p style={{ margin: 0, whiteSpace: 'pre-wrap' }}>{currentQuestion}</p>
+      {/* Step 1: File upload (idle only) */}
+      {phase === 'idle' && (
+        <section className="card">
+          <div className="card-header">
+            <div>
+              <div className="eyebrow">Step 1</div>
+              <h2 style={{ margin: 0 }}>書類を読み込む</h2>
             </div>
-            {/* speaking 中はバナーを出さず、小さなスキップだけ */}
-            {phase === 'speaking' && (
-              <div style={{ textAlign: 'right', marginTop: 6 }}>
-                <button
-                  className="button secondary"
-                  style={{ fontSize: 12, padding: '4px 10px', borderRadius: 8 }}
-                  onClick={skipSpeech}
-                >
-                  スキップ
-                </button>
-              </div>
+          </div>
+          <div style={{ display: 'grid', gap: 14, marginBottom: 20 }}>
+            <FileDropZone
+              label="案件概要ファイル"
+              accept={ACCEPT}
+              file={jobFile}
+              onChange={setJobFile}
+            />
+            <FileDropZone
+              label="履歴書・職務経歴書"
+              accept={ACCEPT}
+              file={resumeFile}
+              onChange={setResumeFile}
+            />
+          </div>
+
+          {setupError && <p className="error-text" style={{ marginBottom: 12 }}>{setupError}</p>}
+
+          <div style={{ textAlign: 'center' }}>
+            <button
+              className="button primary"
+              style={{ padding: '14px 40px', fontSize: 16, borderRadius: 16 }}
+              onClick={() => void handleStart()}
+              disabled={!jobFile || !resumeFile || setupLoading}
+            >
+              {setupLoading ? 'ファイルを解析中...' : '面接を開始する'}
+            </button>
+            {(!jobFile || !resumeFile) && !setupLoading && (
+              <p style={{ color: 'var(--muted)', fontSize: 13, marginTop: 8 }}>
+                2つのファイルを選択してから開始してください
+              </p>
             )}
           </div>
-        )}
+        </section>
+      )}
 
-        {/* ステータスエリア — speaking 中は表示しない */}
-        {phase !== 'speaking' && (
-          <div className="voice-status-area">
-            {phase === 'idle' && (
-              <div style={{ textAlign: 'center' }}>
-                <p style={{ color: 'var(--muted)', marginBottom: 20, fontSize: 15 }}>
-                  ボタンを押すと面接練習が始まります
-                </p>
-                <button
-                  className="button primary"
-                  style={{ padding: '16px 40px', fontSize: 16, borderRadius: 16 }}
-                  onClick={handleStart}
-                >
-                  面接を開始する
-                </button>
+      {/* Step 2: Interview interaction (after idle) */}
+      {phase !== 'idle' && (
+        <section className="card">
+          {currentQuestion && (
+            <div style={{ marginBottom: phase === 'speaking' ? 6 : 20 }}>
+              <div className="meta-label">面接官の質問</div>
+              <div className="chat-bubble interviewer" style={{ maxWidth: '100%' }}>
+                <div className="chat-bubble-label">面接官（AI）</div>
+                <p style={{ margin: 0, whiteSpace: 'pre-wrap' }}>{currentQuestion}</p>
               </div>
-            )}
-
-            {phase === 'loading' && (
-              <div className="voice-status">
-                <div className="voice-spinner" />
-                <span style={{ color: 'var(--muted)', fontSize: 14 }}>少々お待ちください...</span>
-              </div>
-            )}
-
-            {phase === 'listening' && (
-              <div style={{ textAlign: 'center' }}>
-                <div className="mic-pulse-ring">
-                  <MicIcon />
+              {phase === 'speaking' && (
+                <div style={{ textAlign: 'right', marginTop: 6 }}>
+                  <button
+                    className="button secondary"
+                    style={{ fontSize: 12, padding: '4px 10px', borderRadius: 8 }}
+                    onClick={skipSpeech}
+                  >
+                    スキップ
+                  </button>
                 </div>
-                <p style={{ color: 'var(--muted)', margin: '14px 0', fontSize: 15 }}>
-                  聞いています... 回答を話してください
-                </p>
-                {liveTranscript && (
-                  <div className="voice-transcript" style={{ textAlign: 'left', maxWidth: 480, margin: '0 auto' }}>
-                    {liveTranscript}
+              )}
+            </div>
+          )}
+
+          {phase !== 'speaking' && (
+            <div className="voice-status-area">
+              {phase === 'loading' && (
+                <div className="voice-status">
+                  <div className="voice-spinner" />
+                  <span style={{ color: 'var(--muted)', fontSize: 14 }}>少々お待ちください...</span>
+                </div>
+              )}
+
+              {phase === 'listening' && (
+                <div style={{ textAlign: 'center' }}>
+                  <div className="mic-pulse-ring">
+                    <MicIcon />
                   </div>
-                )}
-              </div>
-            )}
+                  <p style={{ color: 'var(--muted)', margin: '14px 0', fontSize: 15 }}>
+                    聞いています... 回答を話してください
+                  </p>
+                  {liveTranscript && (
+                    <div
+                      className="voice-transcript"
+                      style={{ textAlign: 'left', maxWidth: 480, margin: '0 auto' }}
+                    >
+                      {liveTranscript}
+                    </div>
+                  )}
+                </div>
+              )}
 
-            {phase === 'done' && (
-              <div className="voice-status">
-                <span style={{ fontWeight: 700, fontSize: 16 }}>
-                  面接が終了しました。お疲れ様でした！
-                </span>
-              </div>
-            )}
-          </div>
-        )}
+              {phase === 'done' && (
+                <div className="voice-status">
+                  <span style={{ fontWeight: 700, fontSize: 16 }}>
+                    面接が終了しました。お疲れ様でした！
+                  </span>
+                </div>
+              )}
+            </div>
+          )}
 
-        {error && <p className="error-text" style={{ marginTop: 12 }}>{error}</p>}
-        <div ref={bottomRef} />
-      </section>
+          {error && <p className="error-text" style={{ marginTop: 12 }}>{error}</p>}
+          <div ref={bottomRef} />
+        </section>
+      )}
 
       {/* BARS Feedback */}
       {feedback && (
@@ -348,6 +406,39 @@ export default function AiInterviewVoicePage() {
           </div>
         </section>
       )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Sub-components
+// ---------------------------------------------------------------------------
+
+function FileDropZone({
+  label,
+  accept,
+  file,
+  onChange,
+}: {
+  label: string;
+  accept: string;
+  file: File | null;
+  onChange: (f: File | null) => void;
+}) {
+  return (
+    <div>
+      <div className="meta-label" style={{ marginBottom: 6 }}>
+        {label} <span style={{ color: '#b42318' }}>*</span>
+      </div>
+      <label className={`file-drop-zone${file ? ' has-file' : ''}`}>
+        <input
+          type="file"
+          accept={accept}
+          style={{ display: 'none' }}
+          onChange={(e) => onChange(e.target.files?.[0] ?? null)}
+        />
+        {file ? `✓  ${file.name}` : 'クリックしてファイルを選択（TXT / PDF / Excel）'}
+      </label>
     </div>
   );
 }

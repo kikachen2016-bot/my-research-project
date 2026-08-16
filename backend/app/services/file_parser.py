@@ -30,8 +30,25 @@ def extract_text_from_resume_file(filename: str, content: bytes) -> str:
         except Exception as e:
             raise ValueError(f"Wordファイルの読み込みに失敗しました: {e}")
 
+    elif ext in (".xlsx", ".xls"):
+        try:
+            import openpyxl
+        except ImportError:
+            raise ValueError("openpyxl がインストールされていません")
+        try:
+            wb = openpyxl.load_workbook(io.BytesIO(content), data_only=True)
+            lines = []
+            for ws in wb.worksheets:
+                for row in ws.iter_rows(values_only=True):
+                    line = " ".join(str(c) for c in row if c is not None)
+                    if line.strip():
+                        lines.append(line)
+            text = "\n".join(lines)
+        except Exception as e:
+            raise ValueError(f"Excelファイルの読み込みに失敗しました: {e}")
+
     else:
-        raise ValueError(f"未対応の形式です: {ext}（対応形式: .txt / .pdf / .docx）")
+        raise ValueError(f"未対応の形式です: {ext}（対応形式: .txt / .pdf / .xlsx / .docx）")
 
     if not text.strip():
         raise ValueError(

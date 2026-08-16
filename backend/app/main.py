@@ -477,10 +477,35 @@ def get_interview_preparation(preparation_id: int, db: Session = Depends(get_db)
 
 # --- AI面接（テスト版、DB保存なし） ---
 
+@app.post(f"{settings.api_v1_prefix}/ai-interview-voice/parse-context")
+async def parse_voice_context(
+    job_file: UploadFile = File(...),
+    resume_file: UploadFile = File(...),
+):
+    try:
+        job_content = await job_file.read()
+        job_description = extract_text_from_resume_file(job_file.filename or "job.txt", job_content)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"案件ファイルの解析エラー: {e}")
+
+    try:
+        resume_content = await resume_file.read()
+        resume_text = extract_text_from_resume_file(resume_file.filename or "resume.txt", resume_content)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"履歴書ファイルの解析エラー: {e}")
+
+    return {"job_description": job_description, "resume_text": resume_text}
+
+
 @app.post(f"{settings.api_v1_prefix}/ai-interview/turn", response_model=AiInterviewTurnResponse)
 def ai_interview_turn(payload: AiInterviewTurnRequest):
     history = [item.model_dump() for item in payload.history]
-    result = get_next_turn(history, include_audio=payload.include_audio)
+    result = get_next_turn(
+        history,
+        include_audio=payload.include_audio,
+        job_description=payload.job_description,
+        resume_text=payload.resume_text,
+    )
     return AiInterviewTurnResponse(
         role="interviewer",
         content=result["content"],

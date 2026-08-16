@@ -50,12 +50,34 @@ export async function getPreparation(id: string): Promise<InterviewPreparationRe
 export async function postAiInterviewTurn(
   history: AiInterviewMessage[],
   includeAudio = false,
+  jobDescription = '',
+  resumeText = '',
 ): Promise<AiInterviewTurnResponse> {
   const res = await fetch(`${API_URL}/ai-interview/turn`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ history, include_audio: includeAudio }),
+    body: JSON.stringify({
+      history,
+      include_audio: includeAudio,
+      job_description: jobDescription,
+      resume_text: resumeText,
+    }),
     cache: 'no-store',
   });
   return parseJson<AiInterviewTurnResponse>(res, 'Failed to get next interview turn');
+}
+
+export async function parseVoiceContext(
+  jobFile: File,
+  resumeFile: File,
+): Promise<{ job_description: string; resume_text: string }> {
+  const form = new FormData();
+  form.append('job_file', jobFile);
+  form.append('resume_file', resumeFile);
+  const res = await fetch(`${API_URL}/ai-interview-voice/parse-context`, {
+    method: 'POST',
+    body: form,
+    cache: 'no-store',
+  });
+  return parseJson<{ job_description: string; resume_text: string }>(res, 'ファイルの解析に失敗しました');
 }

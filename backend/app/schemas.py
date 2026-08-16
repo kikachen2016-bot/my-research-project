@@ -188,6 +188,8 @@ class AiInterviewMessage(BaseModel):
 class AiInterviewTurnRequest(BaseModel):
     history: list[AiInterviewMessage] = []
     include_audio: bool = False
+    job_description: str = ""
+    resume_text: str = ""
 
 
 class AiInterviewTurnResponse(BaseModel):
