@@ -8,7 +8,7 @@ const MAX_QUESTIONS = 5;
 const MAX_RETRIES = 3;
 const ACCEPT = '.txt,.pdf,.xlsx,.xls,.docx';
 
-type Phase = 'idle' | 'loading' | 'speaking' | 'listening' | 'done';
+type Phase = 'idle' | 'loading' | 'speaking' | 'waiting' | 'listening' | 'done';
 
 export default function AiInterviewVoicePage() {
   // --- Setup state ---
@@ -33,6 +33,7 @@ export default function AiInterviewVoicePage() {
   const recognitionRef = useRef<SpeechRecognition | null>(null);
   const ttsResolveRef = useRef<(() => void) | null>(null);
   const retryCountRef = useRef(0);
+  const stoppedByUserRef = useRef(false);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   // Function refs break the circular dependency between fetchAndPlay ↔ startMic
@@ -101,7 +102,7 @@ export default function AiInterviewVoicePage() {
   }
 
   // ---------------------------------------------------------------------------
-  // STT: Web Speech API (Chrome推奨)
+  // STT: Web Speech API — continuous mode, user controls start/stop
   // ---------------------------------------------------------------------------
   function startMic() {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -114,71 +115,76 @@ export default function AiInterviewVoicePage() {
 
     const rec = new Ctor();
     rec.lang = 'ja-JP';
-    rec.continuous = false;
+    rec.continuous = true;
     rec.interimResults = true;
 
-    let gotFinal = false;
     let accFinal = '';
     let errorFired = false;
 
     rec.onresult = (e) => {
-      let final = '';
+      let newFinal = '';
       let interim = '';
       for (let i = 0; i < e.results.length; i++) {
-        if (e.results[i].isFinal) final += e.results[i][0].transcript;
+        if (e.results[i].isFinal) newFinal += e.results[i][0].transcript;
         else interim += e.results[i][0].transcript;
       }
-      if (final) { accFinal = final; gotFinal = true; }
-      setLiveTranscript(final || interim);
+      if (newFinal) accFinal = newFinal;
+      setLiveTranscript(accFinal + (interim ? interim : ''));
     };
 
     rec.onerror = (e) => {
-      errorFired = true;
       if (e.error !== 'no-speech' && e.error !== 'aborted') {
+        errorFired = true;
         setError(`音声認識エラー: ${e.error}`);
       }
     };
 
     rec.onend = () => {
-      if (errorFired) {
+      if (stoppedByUserRef.current) {
+        stoppedByUserRef.current = false;
+        setLiveTranscript('');
+        if (accFinal.trim()) {
+          retryCountRef.current = 0;
+          const updated: AiInterviewMessage[] = [
+            ...messagesRef.current,
+            { role: 'candidate', content: accFinal.trim() },
+          ];
+          setMessages(updated);
+          void fetchAndPlayRef.current(updated);
+        } else {
+          setPhase('waiting');
+          setError('回答が認識されませんでした。もう一度お試しください。');
+        }
+      } else if (errorFired) {
         if (retryCountRef.current < MAX_RETRIES) {
           retryCountRef.current++;
           setTimeout(() => startMicRef.current(), 600);
         } else {
           retryCountRef.current = 0;
           setError('マイクのアクセス許可を確認し、ページを再読み込みしてください。');
+          setPhase('waiting');
         }
-        return;
-      }
-      if (gotFinal && accFinal.trim()) {
-        retryCountRef.current = 0;
-        setLiveTranscript('');
-        const updated: AiInterviewMessage[] = [
-          ...messagesRef.current,
-          { role: 'candidate', content: accFinal.trim() },
-        ];
-        setMessages(updated);
-        void fetchAndPlayRef.current(updated);
       } else {
-        if (retryCountRef.current < MAX_RETRIES) {
-          retryCountRef.current++;
-          setTimeout(() => startMicRef.current(), 300);
-        } else {
-          retryCountRef.current = 0;
-          setError('音声が認識されませんでした。マイクに向かって話してください。');
-        }
+        // Unexpected stop — return to waiting
+        setPhase('waiting');
       }
     };
 
     recognitionRef.current = rec;
     setLiveTranscript('');
     setError('');
+    stoppedByUserRef.current = false;
     rec.start();
     setPhase('listening');
   }
 
+  function stopMic() {
+    stoppedByUserRef.current = true;
+    recognitionRef.current?.stop();
+  }
+
   // ---------------------------------------------------------------------------
-  // Core loop: fetch turn → TTS → mic → repeat
+  // Core loop: fetch turn → TTS → wait for user → mic → repeat
   // ---------------------------------------------------------------------------
   async function fetchAndPlay(history: AiInterviewMessage[]) {
     setPhase('loading');
@@ -203,7 +209,7 @@ export default function AiInterviewVoicePage() {
         setPhase('speaking');
         await playTts(res.content, res.audio_base64);
         await new Promise<void>((r) => setTimeout(r, 100));
-        startMicRef.current();
+        setPhase('waiting');
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'AI面接官との通信に失敗しました');
@@ -339,18 +345,36 @@ export default function AiInterviewVoicePage() {
                 </div>
               )}
 
-              {phase === 'listening' && (
+              {(phase === 'waiting' || phase === 'listening') && (
                 <div style={{ textAlign: 'center' }}>
-                  <div className="mic-pulse-ring">
-                    <MicIcon />
-                  </div>
-                  <p style={{ color: 'var(--muted)', margin: '14px 0', fontSize: 15 }}>
-                    聞いています... 回答を話してください
+                  <button
+                    onClick={phase === 'waiting' ? () => startMicRef.current() : stopMic}
+                    style={{
+                      width: 72,
+                      height: 72,
+                      borderRadius: '50%',
+                      border: 'none',
+                      cursor: 'pointer',
+                      background: phase === 'waiting' ? '#22c55e' : '#ef4444',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      boxShadow: '0 4px 16px rgba(0,0,0,.18)',
+                      transition: 'background .2s',
+                    }}
+                    aria-label={phase === 'waiting' ? '回答を開始する' : '回答を終了して送信する'}
+                  >
+                    {phase === 'waiting' ? <PlayIcon /> : <StopIcon />}
+                  </button>
+                  <p style={{ color: 'var(--muted)', margin: '14px 0 0', fontSize: 14 }}>
+                    {phase === 'waiting'
+                      ? '準備ができたら ▶ を押して回答を開始してください'
+                      : '回答が終わったら ■ を押して送信してください'}
                   </p>
-                  {liveTranscript && (
+                  {phase === 'listening' && liveTranscript && (
                     <div
                       className="voice-transcript"
-                      style={{ textAlign: 'left', maxWidth: 480, margin: '0 auto' }}
+                      style={{ textAlign: 'left', maxWidth: 480, margin: '14px auto 0' }}
                     >
                       {liveTranscript}
                     </div>
@@ -440,6 +464,22 @@ function FileDropZone({
         {file ? `✓  ${file.name}` : 'クリックしてファイルを選択（TXT / PDF / Excel）'}
       </label>
     </div>
+  );
+}
+
+function PlayIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="white" width="32" height="32" aria-hidden="true">
+      <path d="M8 5v14l11-7z" />
+    </svg>
+  );
+}
+
+function StopIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="white" width="28" height="28" aria-hidden="true">
+      <rect x="6" y="6" width="12" height="12" rx="1" />
+    </svg>
   );
 }
 
