@@ -16,12 +16,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <Link className="brand" href="/">Interview BARS Systemテスト</Link>
             <nav>
               <Link href="/">ホーム</Link>
-              <Link href="/preparation">面談準備</Link>
-              <Link href="/session/new">面談診断</Link>
-              <Link href="/history">履歴</Link>
-              <Link href="/ai-interview">AI面接（テキスト）</Link>
-              <Link href="/ai-interview-voice">AI面接（音声）</Link>
-              <Link href="/criteria">評価基準</Link>
+              <Link href="/ai-interview-voice">AI面接</Link>
             </nav>
           </div>
         </header>
